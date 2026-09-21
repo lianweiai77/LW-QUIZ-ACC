@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>線上測驗系統</title>
+    <!-- 引入 EmailJS SDK -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+    <style>
+        * { box-sizing: border-box; font-family: "Microsoft JhengHei", Arial, sans-serif; }
+        body { background-color: #f4f7f6; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 650px; position: relative; }
+        
+        /* 右上方計時器面板（僅顯示倒計時總時間） */
+        .timer-box { position: absolute; top: 20px; right: 20px; text-align: right; background: #eef2f5; padding: 10px 15px; border-radius: 6px; font-size: 14px; }
+        .timer-box .total-time { color: #d9534f; font-weight: bold; font-size: 16px; }
+
+        .hidden { display: none; }
+        h2 { margin-top: 0; color: #333; }
+        .input-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        input[type="text"], select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+        
+        /* 選擇題樣式 */
+        .options label { display: block; background: #f9f9f9; padding: 10px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
+        .options label:hover { background: #e9e9e9; }
+        .options input { margin-right: 10px; }
+
+        /* 會計分錄填空表格 */
+        .entry-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .entry-table th, .entry-table td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        .entry-table input { width: 90%; }
+
+        button { background-color: #4CAF50; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 4px; cursor: pointer; margin-top: 20px; width: 100%; }
+        button:hover { background-color: #45a049; }
+
+        /* 題目內表格美化樣式 */
+        .quiz-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 16px;
+        }
+        .quiz-table th, .quiz-table td {
+            border: 1px solid #ccc;
+            padding: 8px 12px;
+            text-align: center;
+        }
+        .quiz-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .quiz-table tr:nth-child(even) {
+            background-color: #fafafa; /* 偶數行加上淺灰背景，利於閱讀 */
+        }
+        /* 表格標題樣式 */
+        .table-caption {
+            margin-top: 24px;
+            margin-bottom:10px;
+            font-size: 20px;
+            color: #2c3e50;
+            font-weight: bold;
+            text-align: center
+        }
+        /* 填空表格樣式 */
+        .fill-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            margin-bottom: 15px;
+        }
+        .fill-table th, .fill-table td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: center;
+        }
+        .fill-table th {
+            background-color: #f2f2f2;
+        }
+        .fill-table input[type="text"] {
+            width: 90%;
+            padding: 6px;
+            border: 1px solid #aaa;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 15px;
+        }
+        /* 題目圖片樣式 */
+        .quiz-img {
+            max-width: 100%;       /* 限制最大寬度不超過題目卡片 */
+            height: auto;          /* 保持原圖長寬比例 */
+            display: block;        /* 獨立成一行 */
+            margin: 15px auto;     /* 上下留白、左右自動置中 */
+            border-radius: 6px;    /* 圓角邊框（可選） */
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1); /* 淡淡的陰影（可選） */
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- 右上方僅顯示倒計時 40 分鐘 -->
+    <div id="timer-container" class="timer-box hidden">
+        <div>剩餘總時間：<span id="total-timer" class="total-time">40:00</span></div>
+    </div>
+
+    <!-- 頁面 1：填寫姓名 -->
+    <div id="start-page">
+        <h2>歡迎參加線上測驗</h2>
+        <p>測驗時間為 40 分鐘，每一題無法退回修改，請確認後再按下一題。</p>
+        <div class="input-group">
+            <label for="student-name">請輸入您的姓名：</label>
+            <input type="text" id="student-name" placeholder="姓名">
+        </div>
+        <button onclick="startExam()">開始考試</button>
+    </div>
+
+    <!-- 頁面 2：題目展示區 -->
+    <div id="exam-page" class="hidden">
+        <h3 id="question-title"></h3>
+        <div id="question-content"></div>
+        <button id="next-btn" onclick="nextQuestion()">下一題</button>
+    </div>
+
+    <!-- 頁面 3：完成頁面 -->
+    <div id="finish-page" class="hidden">
+        <h2>測驗已結束</h2>
+        <p id="finish-message">您的答案已成功傳送，感謝您的作答！</p>
+    </div>
+</div>
+
+<script>
+    // === EmailJS 設定（請填入您的金鑰） ===
+    const EMAILJS_PUBLIC_KEY = "PS5_BPkQ_IWh4ncFA"; 
+    const EMAILJS_SERVICE_ID = "service_1n102hm";
+    const EMAILJS_TEMPLATE_ID = "template_1oby7y6";
+    
+    (function(){
+        if(EMAILJS_PUBLIC_KEY !== "YOUR_PUBLIC_KEY"){
+            emailjs.init(EMAILJS_PUBLIC_KEY);
+        }
+    })();
+
+    // === 題目內容 ===
+    const questions = [
+        {
+            id: 1,
+            type: "single", // 選擇題
+            title: "題目 1：選擇題",
+            question: "「透過其他綜合損益按公允價值衡量之金融資產」因公允價值下降所造成的金融資產評價調整應列在：",
+            options: ["A. 營業損失", "B. 營業外損失", "C. 負債", "D. 股東權益"]
+        },
+        {
+            id: 2,
+            type: "single", // 選擇題
+            title: "題目 2：選擇題",
+            question: "以下描述，有幾項正確？<br><br>A. 透過其他綜合損益按公允價值衡量之金融資產的出售損益，為「取得時之公允價值加上取得成本」與「出售時之售價」的差異數。<br><br>B.攤銷後成本衡量之金融資產期末必須以攤銷成本表達。<br><br>C.公允價值變動列入損益之金融資產的取得成本得列為當期費用。<br><br>D.以成本衡量之金融資產之價值變動列為股東權益之調整項目。",
+            options: ["A. 一項", "B. 二項", "C. 三項", "D. 四項"]
+        },
+        {
+            id: 3,
+            type: "single", // 選擇題
+            title: "題目 3：選擇題",
+            question: "X1年7月1日甲公司以22,000出售成本60,000之機器。該機器耐用年限為5年，殘值10,000，公司以直線法計提折舊，X1年1月1日累計折舊帳戶餘額為35,000。<br><br>則甲公司應認列之處分損益為：",
+            options: ["A. 處分損失2,000", "B. 處分損失 3,000", "C. 處分利得2,000", "D. 處分利得 3,000"]
+        },
+        {
+            id: 4,
+            type: "single", // 選擇題
+            title: "題目 4：選擇題",
+            question: "保全公司核准發行100,000股面額1元普通股，實際發行40,000股，以每股5元全數由摩根購入，此外，並無其他股票發行，此時：",
+            options: ["A. 摩根擁有保全公司40%股權", "B. 保全公司應承認160,000的穫利", "C. 保全公司普通股股本為200,000元", "D. 保全公司普通股股本40,000元"]
+        },
+        {
+            id: 5,
+            type: "single", // 選擇題
+            title: "題目 5：選擇題",
+            question: "甲公司淨資產400,000，投入資本250,000，發行並流通在外普通股25,000股，由前述資料可知下列那一項敍述一定成立？",
+            options: ["A. 保留盈餘400,000", "B. 每股帳面價值 16元", "C. 累積虧損 250,000", "D. 每股帳面價值10元"]
+        },
+        {
+            id: 6,
+            type: "single", // 選擇題
+            title: "題目 6：選擇題",
+            question: "下列何者不是收入認列的必要條件？",
+            options: ["A. 具有說服力之證據證明雙方交易存在", "B. 商品已交付且風險及報酬已移轉、勞務已提供或資產已提供他人使用", "C. 價款係屬固定", "D. 價款收現性可合理確定"]
+        },
+        {
+            id: 7,
+            type: "multi_table_fill", // 多填空表格題型
+            title: "題目 7：填空題",
+            
+            // 1. 文字敘述與題目展示表格
+            question: `
+                中信工程公司承造一倉庫，合約價格400,000，工程於109年開工，110年完成。有關資料如下：<br>
+                <table class="quiz-table">
+                    <thead>
+                        <tr>
+                            <th> </th>
+                            <th>109/12/31</th>
+                            <th>110/12/31</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>己發生的成本</td><td>200,000</td><td>110,000</td></tr>
+                        <tr><td>估計完工成本</td><td>100,000</td><td>-</td></tr>
+                    </tbody>
+                </table>
+                該公司採用完工百分比法及成本回收法認列收入，分別各年的營業收入及成本及毛利請填入下列空格中：
+            `,
+            
+            // 2. 答案需填寫的【兩個表格】
+            tables: [
+                {
+                    title: "A. 完工比例法",
+                    headers: ["","109年", "110年"],
+                    rows: [
+                        ["營業收入", { inputId: "q1_t1_11", placeholder: " " }, { inputId: "q1_t1_12", placeholder: " " }],
+                        ["營業成本", { inputId: "q1_t1_21", placeholder: " " }, { inputId: "q1_t1_22", placeholder: " " }],
+                        ["營業毛利", { inputId: "q1_t1_31", placeholder: " " }, { inputId: "q1_t1_32", placeholder: " " }]
+                    ]
+                },
+                {
+                    title: "B. 成本回收法",
+                    headers: ["","109年", "110年"],
+                    rows: [
+                        ["營業收入", { inputId: "q1_t2_11", placeholder: " " }, { inputId: "q1_t2_12", placeholder: " " }],
+                        ["營業成本", { inputId: "q1_t2_21", placeholder: " " }, { inputId: "q1_t2_22", placeholder: " " }],
+                        ["營業毛利", { inputId: "q1_t2_31", placeholder: " " }, { inputId: "q1_t2_32", placeholder: " " }]
+                    ]
+                }
+            ]
+        },
+        {
+            id: 8,
+            type: "fill", // 填充題
+            title: "題目 8：填充題",
+            question: "現行一般營業稅稅率為____%。"
+        },
+        {
+            id: 9,
+            type: "fill", // 填充題
+            title: "題目 9：填充題",
+            question: "我國現行營利事業所得稅稅率為____%。"
+        },
+        {
+            id: 10,
+            type: "fill", // 填充題
+            title: "題目 10：填充題",
+            question: "1、2、6、42、1806、「？」<br>請問「？」應該填入____。"
+        },
+        {
+            id: 11,
+            type: "table_fill", // 表格填充題(分錄)
+            title: "題目 11：編表題",
+            //題目敘述
+            question: `
+            請依聯緯有限公司102年底試算表 (詳參下列考題)，編列當年度損益表<br><br>
+            
+            <!-- 加入圖片標籤 -->
+            <img src="聯緯公司-試算表1021231.jpg" alt="試算表" class="quiz-img">
+            `,
+            // 表格上方顯示的標題
+            tableTitle:"<br>聯緯有限公司<br>（綜合）損益表<br>102年01月01日至12月31日<br>",
+
+            // 表格標題列 (Headers)        
+            headers: ["","金額", "金額小計"],
+            // 表格內容與填空處 (Rows)
+            rows: [
+                    ["營業收入", { inputId: "q1_t3_12", placeholder: " " },"4,000,000"],
+                    ["營業成本", { inputId: "q1_t3_22", placeholder: " " }, { inputId: "q1_t3_23", placeholder: " " }],
+                    ["營業毛利", { inputId: "q1_t3_32", placeholder: " " }, { inputId: "q1_t3_33", placeholder: " " }],
+                    ["營業費用", { inputId: "q1_t3_42", placeholder: " " }, { inputId: "q1_t3_43", placeholder: " " }],
+                    ["    薪資支出", "500,000", { inputId: "q1_t3_53", placeholder: " " }],
+                    [{ inputId: "q1_t3_61", placeholder: " " }, { inputId: "q1_t3_62", placeholder: " " }, { inputId: "q1_t3_63", placeholder: " " }],
+                    [{ inputId: "q1_t3_71", placeholder: " " }, { inputId: "q1_t3_72", placeholder: " " }, { inputId: "q1_t3_73", placeholder: " " }],
+                    [{ inputId: "q1_t3_81", placeholder: " " }, { inputId: "q1_t3_82", placeholder: " " }, { inputId: "q1_t3_83", placeholder: " " }],
+                    ["    營業費用小計", { inputId: "q1_t3_92", placeholder: " " }, { inputId: "q1_t3_93", placeholder: " " }],
+                    ["營業利益", { inputId: "q1_t3_102", placeholder: " " }, { inputId: "q1_t3_103", placeholder: " " }],
+                    ["營業外收入及損失", { inputId: "q1_t3_112", placeholder: " " }, { inputId: "q1_t3_113", placeholder: " " }],
+                    [{ inputId: "q1_t3_121", placeholder: " " }, { inputId: "q1_t3_122", placeholder: " " }, { inputId: "q1_t3_123", placeholder: " " }],
+                    [{ inputId: "q1_t3_131", placeholder: " " }, { inputId: "q1_t3_132", placeholder: " " }, { inputId: "q1_t3_133", placeholder: " " }],
+                    [{ inputId: "q1_t3_141", placeholder: " " }, { inputId: "q1_t3_142", placeholder: " " }, { inputId: "q1_t3_143", placeholder: " " }],
+                    ["業外收入及損失小計", { inputId: "q1_t3_152", placeholder: " " }, { inputId: "q1_t3_153", placeholder: " " }],
+                    ["本期稅前損益", { inputId: "q1_t3_162", placeholder: " " }, { inputId: "q1_t3_163", placeholder: " " }],
+                    ["所得稅費用", { inputId: "q1_t3_172", placeholder: " " }, "（80,000）"],
+                    ["本期稅後損益", { inputId: "q1_t3_182", placeholder: " " }, { inputId: "q1_t3_183", placeholder: " " }]
+                ],
+        },
+        {
+            id: 12,
+            type: "table_fill", // 表格填充題(分錄)
+            title: "題目 12：編表題",
+            question: `
+            請依聯緯有限公司102年底試算表 (詳參下列考題)，編列當年度資產負債表<br><br>
+            
+            <!-- 加入圖片標籤 -->
+            <img src="聯緯公司-試算表1021231.jpg" alt="試算表" class="quiz-img">
+            `,
+            tableTitle:"<br>聯緯有限公司<br>（綜合）資產負債表<br>102年12月31日<br>",
+            headers: ["流動資產","金額", "流動負債", "金額"], // 表格標題列
+            rows: [
+                    ["  現金", "5,000", "  銀行借款", "1,000,000"],
+                    [{ inputId: "q1_t4_11", placeholder: " " }, { inputId: "q1_t4_12", placeholder: " " }, { inputId: "q1_t4_13", placeholder: " " }, { inputId: "q1_t4_14", placeholder: " " }],
+                    [{ inputId: "q1_t4_21", placeholder: " " }, { inputId: "q1_t4_22", placeholder: " " }, { inputId: "q1_t4_23", placeholder: " " }, { inputId: "q1_t4_24", placeholder: " " }],
+                    [{ inputId: "q1_t4_31", placeholder: " " }, { inputId: "q1_t4_32", placeholder: " " }, { inputId: "q1_t4_33", placeholder: " " }, { inputId: "q1_t4_34", placeholder: " " }],
+                    [{ inputId: "q1_t4_41", placeholder: " " }, { inputId: "q1_t4_42", placeholder: " " }, { inputId: "q1_t4_43", placeholder: " " }, { inputId: "q1_t4_44", placeholder: " " }],
+                    [{ inputId: "q1_t4_51", placeholder: " " }, { inputId: "q1_t4_52", placeholder: " " }, { inputId: "q1_t4_53", placeholder: " " }, { inputId: "q1_t4_54", placeholder: " " }],
+                    ["流動資產小計", { inputId: "q1_t4_62", placeholder: " " }, "流動負債小計",{ inputId: "q1_t4_64", placeholder: " " }],
+                    ["固定資產", { inputId: "q1_t4_72", placeholder: " " }, { inputId: "q1_t4_73", placeholder: " " }, { inputId: "q1_t4_74", placeholder: " " }],
+                    [{ inputId: "q1_t4_81", placeholder: " " }, { inputId: "q1_t4_82", placeholder: " " }, "資本", { inputId: "q1_t4_84", placeholder: " " }],
+                    [{ inputId: "q1_t4_91", placeholder: " " }, { inputId: "q1_t4_92", placeholder: " " }, { inputId: "q1_t4_93", placeholder: " " }, { inputId: "q1_t4_94", placeholder: " " }],
+                    ["固定資產小計", { inputId: "q1_t4_102", placeholder: " " }, "  資本公積", { inputId: "q1_t4_104", placeholder: " " }],
+                    ["其他資產", { inputId: "q1_t4_112", placeholder: " " }, "保留盈餘",{ inputId: "q1_t4_114", placeholder: " " }],
+                    [{ inputId: "q1_t4_121", placeholder: " " }, { inputId: "q1_t4_122", placeholder: " " }, "  法定公積", { inputId: "q1_t4_124", placeholder: " " }],
+                    [{ inputId: "q1_t3_131", placeholder: " " }, { inputId: "q1_t3_132", placeholder: " " },"  本期損益", { inputId: "q1_t3_134", placeholder: " " }],
+                    ["其他資產小計", { inputId: "q1_t3_142", placeholder: " " }, "保留盈餘小計", { inputId: "q1_t3_144", placeholder: " " }],
+                    [{ inputId: "q1_t3_151", placeholder: " " }, { inputId: "q1_t3_152", placeholder: " " }, "股本權益合計", { inputId: "q1_t3_154", placeholder: " " }],
+                    ["資產總額", { inputId: "q1_t3_162", placeholder: " " }, "負債及股東權益總額", { inputId: "q1_t3_164", placeholder: " " }]
+                ],
+        },
+        {
+            id: 13,
+            type: "entry", // 會計分錄題
+            title: "題目 13：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>108.01.01甲公司成立，設立時公司股本為新台幣2,000萬元。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 14,
+            type: "entry", // 會計分錄題
+            title: "題目 14：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>108.01.02開立支票購買土地、廠房，土地金額為800萬，廠房金額為500萬，票據兌現日期分別為108.01.31及108.01.31。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 15,
+            type: "entry", // 會計分錄題
+            title: "題目 15：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>購置機器設備500,000元，貨款尚未支付。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 16,
+            type: "entry", // 會計分錄題
+            title: "題目 16：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>購進原料500,000元，貨款尚未支付。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 17,
+            type: "entry", // 會計分錄題
+            title: "題目 17：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>現金銷貨收入為200,000元。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 18,
+            type: "entry", // 會計分錄題
+            title: "題目 18：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>購買辦公室用文具用品支付現金500元。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 19,
+            type: "entry", // 會計分錄題
+            title: "題目 19：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>現金60,000元購入辦公室用電腦一台。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 20,
+            type: "entry", // 會計分錄題
+            title: "題目 20：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>賖銷銷貨收入為1,300,000元。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 21,
+            type: "entry", // 會計分錄題
+            title: "題目 21：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>支付現金50,000元修理機器設備。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 22,
+            type: "entry", // 會計分錄題
+            title: "題目 22：會計分錄題",
+            question: "甲公司為一製造業，請寫出下列會計分錄<br>全年度直接人工費用240,000元；薪資費用216,000元，於108.12.31銀行存款直接轉帳支付。",
+            rows: [
+                { type: "借方" },
+                { type: "借方" },
+                { type: "貸方" },
+                { type: "貸方" }
+            ]
+        },
+        {
+            id: 23,
+            type: "table_fill", // 表格填充題(分錄)
+            title: "題目 23：編表題",
+            question:"甲公司為一製造業，請依照以下資訊作各固定資產之折舊攤銷分錄。<br><br>假設：<br>1.期末原料為新台幣50,000元；期末製成品為30,000元<br>2.廠房耐用年限為十年；機器設備耐用年限為五年；電腦設備耐用年限為三年，折舊攤提採直線法",
+            tableTitle: "營業成本表",
+            headers: ["原料","金額"],
+            rows: [
+                    ["　　期初原料", { inputId: "q1_t5_1", placeholder: " " }],
+                    ["　　本期進料", { inputId: "q1_t5_2", placeholder: " " }],
+                    ["　　減：期末原料", "（　　　50,000）"],
+                    ["本期耗料（小計）", { inputId: "q1_t5_4", placeholder: " " }],
+                    ["直接人工", { inputId: "q1_t5_5", placeholder: " " }],
+                    ["製造費用", { inputId: "q1_t5_6", placeholder: " " }],
+                    ["　　修繕費", { inputId: "q1_t5_7", placeholder: " " }],
+                    ["　　折舊費用", { inputId: "q1_t5_8", placeholder: " " }],
+                    ["製造成本", { inputId: "q1_t5_9", placeholder: " " }],
+                    ["　　期初製成品", { inputId: "q1_t5_10", placeholder: " " }],
+                    ["　　減：期末製成品", { inputId: "q1_t5_11", placeholder: " " }],
+                    ["營業成本", { inputId: "q1_t5_12", placeholder: " " }]
+                ],
+        },
+    ];
+
+    let currentQIndex = 0;
+    let studentName = "";
+    let answers = []; // 儲存答題結果與思考時間
+    
+    // 時間計數變數
+    let totalSec = 40 * 60; // 40分鐘
+    let qSec = 0;          // 本題思考時間 (僅在背景累計，不顯示在前端)
+    let totalInterval = null;
+    let qInterval = null;
+
+    // === 開始考試 ===
+    function startExam() {
+        const nameInput = document.getElementById("student-name").value.trim();
+        if (!nameInput) {
+            alert("請輸入姓名！");
+            return;
+        }
+        studentName = nameInput;
+
+        document.getElementById("start-page").classList.add("hidden");
+        document.getElementById("timer-container").classList.remove("hidden");
+        document.getElementById("exam-page").classList.remove("hidden");
+
+        startTotalTimer();
+        loadQuestion(0);
+    }
+
+    // === 時間格式化 (分:秒) ===
+    function formatTime(sec) {
+        let m = Math.floor(sec / 60);
+        let s = sec % 60;
+        return `${m < 10 ? '0' + m : m}:${s < 10 ? '0' + s : s}`;
+    }
+
+    // === 總倒計時器 (顯示在前端) ===
+    function startTotalTimer() {
+        totalInterval = setInterval(() => {
+            totalSec--;
+            document.getElementById("total-timer").innerText = formatTime(totalSec);
+            if (totalSec <= 0) {
+                clearInterval(totalInterval);
+                clearInterval(qInterval);
+                alert("考試時間到！系統將自動提交答案。");
+                saveCurrentAnswer();
+                submitExam();
+            }
+        }, 1000);
+    }
+
+    // === 單題思考時間計時器 (純背景紀錄，不更新畫面) ===
+    function startQuestionTimer() {
+        qSec = 0; // 重置本題秒數
+        clearInterval(qInterval);
+        qInterval = setInterval(() => {
+            qSec++; // 純在背景累計秒數
+        }, 1000);
+    }
+
+    // === 載入題目 ===
+    function loadQuestion(index) {
+        startQuestionTimer();
+        const q = questions[index];
+        document.getElementById("question-title").innerText = q.title;
+    
+        let html = `<p style="font-size: 18px;">${q.question}</p>`;
+        
+        if (q.type === "single") {
+            html += `<div class="options">`;
+                q.options.forEach((opt) => {
+                    html += `<label><input type="radio" name="q_opt" value="${opt}"> ${opt}</label>`;
+                });
+                html += `</div>`;
+            } else if (q.type === "fill") {
+                html += `<input type="text" id="fill-answer" placeholder="請在此輸入答案">`;
+            } else if (q.type === "entry") {
+                html += `
+                <table class="entry-table">
+                    <tr><th>借/貸</th><th>會計項目</th><th>金額</th></tr>
+                    `;
+                    q.rows.forEach((row, idx) => {
+                        html += `
+                        <tr>
+                            <td>${row.type}</td>
+                            <td><input type="text" id="account_${idx}" placeholder="項目"></td>
+                            <td><input type="text" id="amount_${idx}" placeholder="金額"></td>
+                        </tr>
+                        `;
+                    });
+                    html += `</table>`;
+            } else if (q.type === "table_fill") {
+                // === 新增：表格填空題渲染 ===
+                if (q.tableTitle) {
+                    html += `<h4 class="table-caption">${q.tableTitle}</h4>`;
+                }
+
+                html += `<table class="fill-table"><thead><tr>`;
+                q.headers.forEach(h => {
+                    html += `<th>${h}</th>`;
+                });
+                html += `</tr></thead><tbody>`;
+                
+                q.rows.forEach(row => {
+                    html += `<tr>`;
+                        row.forEach(cell => {
+                            if (typeof cell === "object" && cell.inputId) {
+                                // 如果是空格物件，渲染 input 輸入框
+                                html += `<td><input type="text" id="${cell.inputId}" placeholder="${cell.placeholder || ''}"></td>`;
+                            } else {
+                                // 一般文字欄位
+                                html += `<td>${cell}</td>`;
+                            }
+                        });
+                        html += `</tr>`;
+                });
+                html += `</tbody></table>`;
+            } else if (q.type === "multi_table_fill") {
+                // 跑迴圈渲染多個表格
+                q.tables.forEach(table => {
+                    if (table.title) {
+                        html += `<h4 style="margin-top: 15px; margin-bottom: 5px;">${table.title}</h4>`;
+                    }
+                    html += `<table class="fill-table"><thead><tr>`;
+                        table.headers.forEach(h => {
+                            html += `<th>${h}</th>`;
+                        });
+                    html += `</tr></thead><tbody>`;
+                        
+                    table.rows.forEach(row => {
+                        html += `<tr>`;
+                        row.forEach(cell => {
+                            if (typeof cell === "object" && cell.inputId) {
+                                html += `<td><input type="text" id="${cell.inputId}" placeholder="${cell.placeholder || ''}"></td>`;
+                            } else {
+                                html += `<td>${cell}</td>`;
+                            }
+                        });
+                        html += `</tr>`;
+                    });
+                    html += `</tbody></table>`;
+                });
+            }
+
+            document.getElementById("question-content").innerHTML = html;
+            
+            if (index === questions.length - 1) {
+                document.getElementById("next-btn").innerText = "完成並提交";
+            } else {
+                document.getElementById("next-btn").innerText = "下一題";
+            }
+        }
+
+    // === 紀錄答案與該題思考時間 ===
+    function saveCurrentAnswer() {
+        const q = questions[currentQIndex];
+        let userAns = "";
+
+        if (q.type === "single") {
+            const selected = document.querySelector('input[name="q_opt"]:checked');
+            userAns = selected ? selected.value : "未作答";
+        } else if (q.type === "fill") {
+            const val = document.getElementById("fill-answer").value.trim();
+            userAns = val !== "" ? val : "未作答";
+        } else if (q.type === "entry") {
+            let entryDetails = [];
+            q.rows.forEach((row, idx) => {
+                const acc = document.getElementById(`account_${idx}`).value.trim() || "未填寫";
+                const amt = document.getElementById(`amount_${idx}`).value.trim() || "未填寫";
+                entryDetails.push(`[${row.type}] ${acc}: $${amt}`);
+            });
+            userAns = entryDetails.join(" | ");
+        } else if (q.type === "table_fill") {
+            // === 新增：收集表格內所有填空的值 ===
+            let fillResults = [];
+            q.rows.forEach(row => {
+                row.forEach(cell => {
+                    if (typeof cell === "object" && cell.inputId) {
+                        const el = document.getElementById(cell.inputId);
+                        const val = el && el.value.trim() !== "" ? el.value.trim() : "未填寫";
+                        fillResults.push(`空格(${cell.inputId}): ${val}`);
+                    }
+                });
+            });
+            userAns = fillResults.join(" | ");
+        } else if (q.type === "multi_table_fill") {
+            // 在 saveCurrentAnswer 函式內新增此判斷：
+            let fillResults = [];
+            q.tables.forEach(table => {
+                table.rows.forEach(row => {
+                    row.forEach(cell => {
+                        if (typeof cell === "object" && cell.inputId) {
+                            const el = document.getElementById(cell.inputId);
+                            const val = el && el.value.trim() !== "" ? el.value.trim() : "未填寫";
+                            fillResults.push(`空格(${cell.inputId}): ${val}`);
+                        }
+                    });
+                });
+            });
+            userAns = fillResults.join(" | ");
+        }
+
+        // 保存答案時同時記錄思考時間
+        answers.push({
+            questionId: q.id,
+            title: q.title,
+            answer: userAns,
+            timeSpentSec: qSec,
+            timeSpentFormatted: formatTime(qSec)
+        });
+    }
+
+    // === 下一題 ===
+    function nextQuestion() {
+        saveCurrentAnswer();
+        currentQIndex++;
+
+        if (currentQIndex < questions.length) {
+            loadQuestion(currentQIndex);
+        } else {
+            clearInterval(totalInterval);
+            clearInterval(qInterval);
+            submitExam();
+        }
+    }
+
+    // === 提交並寄信 ===
+    function submitExam() {
+        document.getElementById("exam-page").classList.add("hidden");
+        document.getElementById("timer-container").classList.add("hidden");
+        document.getElementById("finish-page").classList.remove("hidden");
+
+        const totalSpentSec = (40 * 60) - totalSec;
+        const totalSpentFormatted = formatTime(totalSpentSec);
+
+        // 整理信件內容：包含各題回答與背景紀錄的思考時間
+        let answersDetailText = "";
+        answers.forEach(a => {
+            answersDetailText += `${a.title}\n`;
+            answersDetailText += `回答內容：${a.answer}\n`;
+            answersDetailText += `思考時間：${a.timeSpentFormatted} (${a.timeSpentSec} 秒)\n`;
+            answersDetailText += `----------------------------------------\n`;
+        });
+
+        const templateParams = {
+            student_name: studentName,
+            total_time: totalSpentFormatted,
+            answers_detail: answersDetailText
+        };
+
+        if (EMAILJS_PUBLIC_KEY === "YOUR_PUBLIC_KEY") {
+            console.log("未設定 EmailJS，測驗結果與思考時間如下：", templateParams);
+            document.getElementById("finish-message").innerText = "測驗已結束。";
+            return;
+        }
+
+        emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams)
+            .then(function(response) {
+                console.log('SUCCESS!', response.status, response.text);
+            }, function(error) {
+                console.error('FAILED...', error);
+                alert("答案提交發送失敗，請聯繫管理員。");
+            });
+    }
+</script>
+
+</body>
+</html>
